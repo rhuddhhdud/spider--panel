@@ -93,22 +93,24 @@ async def check_and_use(uid: str, n: int) -> bool:
 async def relay_ws_to_tcp(ws: WebSocket, writer: asyncio.StreamWriter, conn_id: str, uid: str):
     try:
         while True:
-            msg = await ws.receive()
+            msg = await asyncio.wait_for(ws.receive(), timeout=120.0)
             if msg["type"] == "websocket.disconnect":
                 break
             data = msg.get("bytes") or (msg.get("text") or "").encode()
             if not data:
                 continue
             if not await check_and_use(uid, len(data)):
-                await ws.close(code=1008, reason="quota/disabled/unknown")
+                await ws.close(code=1008, reason="quota/disabled")
                 break
             stats["total_requests"] += 1
             connections[conn_id]["bytes"] += len(data)
             writer.write(data)
             if writer.transport.get_write_buffer_size() > RELAY_BUF:
                 await writer.drain()
-    except (WebSocketDisconnect, Exception):
-        pass
+    except asyncio.TimeoutError:
+        logger.debug(f"WS recv timeout [{conn_id}]")
+    except (WebSocketDisconnect, Exception) as exc:
+        logger.debug(f"WS->TCP end [{conn_id}]: {exc}")
     finally:
         try:
             writer.write_eof()
@@ -119,18 +121,20 @@ async def relay_tcp_to_ws(ws: WebSocket, reader: asyncio.StreamReader, conn_id: 
     first = True
     try:
         while True:
-            data = await reader.read(RELAY_BUF)
+            data = await asyncio.wait_for(reader.read(RELAY_BUF), timeout=120.0)
             if not data:
                 break
             if not await check_and_use(uid, len(data)):
-                await ws.close(code=1008, reason="quota/disabled/unknown")
+                await ws.close(code=1008, reason="quota/disabled")
                 break
             connections[conn_id]["bytes"] += len(data)
             payload = (b"\x00\x00" + data) if first else data
             first = False
             await ws.send_bytes(payload)
-    except Exception:
-        pass
+    except asyncio.TimeoutError:
+        logger.debug(f"TCP recv timeout [{conn_id}]")
+    except Exception as exc:
+        logger.debug(f"TCP->WS end [{conn_id}]: {exc}")
 
 async def websocket_tunnel(ws: WebSocket, uuid: str):
     await ws.accept()
@@ -187,6 +191,7 @@ async def websocket_tunnel(ws: WebSocket, uuid: str):
             writer.write(payload)
             await writer.drain()
 
+        # Run bi-directional relay
         done, pending = await asyncio.wait(
             {
                 asyncio.create_task(relay_ws_to_tcp(ws, writer, conn_id, uuid)),
