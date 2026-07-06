@@ -1027,11 +1027,6 @@ from relay_vless import (
 app.add_api_websocket_route("/ws/{uuid}", websocket_tunnel)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# XHTTP — Siz10a XHTTP Ultra (ترابرد جدید، جدا از VLESS/WS، هر ۳ مد)
-# ══════════════════════════════════════════════════════════════════════════════
-from xhttp_siz10 import router as xhttp_router
-app.include_router(xhttp_router)
-
 # ── HTTP Proxy ────────────────────────────────────────────────────────────────
 _HOP = {"connection","keep-alive","proxy-authenticate","proxy-authorization",
         "te","trailers","transfer-encoding","upgrade","content-encoding","content-length"}
@@ -2419,6 +2414,12 @@ async def server_stats_http(_=Depends(require_auth)):
 # ── Static files mount (MUST be after all routes) ──
 app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 
+# Lazy XHTTP import (after all symbols defined)
+try:
+    from xhttp_siz10 import router as xhttp_router
+    app.include_router(xhttp_router)
+except Exception:
+    pass  # XHTTP optional
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=CONFIG["port"], log_level="info", workers=1)

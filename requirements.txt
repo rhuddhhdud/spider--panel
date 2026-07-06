@@ -7,3 +7,4 @@ httpx[http2]
 qrcode[pil]==7.4.2
 pillow==10.4.0
 psutil
+cryptography
