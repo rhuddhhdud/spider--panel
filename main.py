@@ -88,6 +88,36 @@ async def load_state():
         logger.warning(f"Could not load state: {e}")
     # Rebuild path index from all users and links
     _rebuild_path_index()
+    # Migrate: auto-create links for users that have config_uuid but no link
+    _migrate_user_links()
+
+
+def _migrate_user_links():
+    """Ensure every user with a config_uuid has a corresponding link in LINKS."""
+    created = 0
+    for uid, u in USERS.items():
+        cuuid = u.get("config_uuid")
+        if not cuuid:
+            continue
+        if cuuid in LINKS:
+            continue
+        LINKS[cuuid] = {
+            "label": u.get("username", uid),
+            "limit_bytes": u.get("traffic_limit_bytes", 0),
+            "used_bytes": u.get("traffic_used_bytes", 0),
+            "created_at": u.get("created_at", datetime.now().isoformat()),
+            "active": (u.get("status", "active") == "active"),
+            "expires_at": u.get("expire_at"),
+            "note": f"لینک کاربر {u.get('username', uid)}",
+            "is_default": False,
+            "sub_id": None,
+            "protocol": u.get("protocol", "vless"),
+            "path": (u.get("path") or "").strip().lstrip("/"),
+            "user_id": uid,
+        }
+        created += 1
+    if created:
+        logger.info(f"_migrate_user_links: created {created} missing links for existing users")
 
 
 def _rebuild_path_index():
@@ -1535,8 +1565,25 @@ async def create_user(request: Request, _=Depends(require_auth)):
             "transport_type": transport_type,
             "inbound_id": inbound_id,
         }
-        # Register path in PATH_INDEX for WebSocket resolution
         _path = USERS[user_id].get("path", "").strip().lstrip("/")
+
+    # Auto-create matching link so relay can find it
+    async with LINKS_LOCK:
+        LINKS[config_uuid] = {
+            "label": username,
+            "limit_bytes": traffic_limit_bytes,
+            "used_bytes": 0,
+            "created_at": datetime.now().isoformat(),
+            "active": True,
+            "expires_at": expire_at,
+            "note": f"لینک کاربر {username}",
+            "is_default": False,
+            "sub_id": None,
+            "protocol": protocol,
+            "path": _path,
+            "user_id": user_id,
+        }
+        # Register path in PATH_INDEX for WebSocket resolution
         if _path:
             PATH_INDEX[_path] = config_uuid
         # Also index by config_uuid for backward compat
@@ -1568,6 +1615,14 @@ async def toggle_user(user_id: str, _=Depends(require_auth)):
         else:
             u["status"] = "disabled"
         new_status = u["status"]
+
+    # Sync link active state
+    config_uuid = u.get("config_uuid")
+    if config_uuid:
+        async with LINKS_LOCK:
+            if config_uuid in LINKS:
+                LINKS[config_uuid]["active"] = (new_status == "active")
+
     asyncio.create_task(save_state())
     log_activity("user", f"کاربر «{u['username']}» {'غیرفعال' if new_status == 'disabled' else 'فعال'} شد", "ok" if new_status == "active" else "warn")
     return {"ok": True, "user_id": user_id, "status": new_status}
@@ -1647,11 +1702,18 @@ async def delete_user(user_id: str, _=Depends(require_auth)):
         if not u:
             raise HTTPException(status_code=404, detail="user not found")
         username = u.get("username", user_id)
-        # Clean up PATH_INDEX
+        # Clean up PATH_INDEX and synced link
         old_path = (u.get("path") or "").strip().lstrip("/")
         if old_path:
             PATH_INDEX.pop(old_path, None)
+        config_uuid = u.get("config_uuid")
+        if config_uuid:
+            PATH_INDEX.pop(config_uuid, None)
         USERS.pop(user_id, None)
+    # Delete matching link
+    if config_uuid:
+        async with LINKS_LOCK:
+            LINKS.pop(config_uuid, None)
     asyncio.create_task(save_state())
     log_activity("user", f"کاربر «{username}» حذف شد", "err")
     return {"ok": True, "deleted": user_id}

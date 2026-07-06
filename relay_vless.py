@@ -34,13 +34,13 @@ def __now_ir():
     return datetime.now(IRAN_TZ)
 
 def __is_link_allowed(link):
-    return _get_main()._is_link_allowed(link)
+    return _get_main().is_link_allowed(link)
 
 def __save_state():
-    return _get_main()._save_state()
+    return _get_main().save_state()
 
 def __log_activity(*args, **kwargs):
-    return _get_main()._log_activity(*args, **kwargs)
+    return _get_main().log_activity(*args, **kwargs)
 
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # VLESS Relay â€” Ø¨Ù‡ÛŒÙ†Ù‡â€ŒØ´Ø¯Ù‡ Ø¨Ø±Ø§ÛŒ Ø­Ø¯Ø§Ú©Ø«Ø± throughput
@@ -162,7 +162,7 @@ async def websocket_tunnel(ws: WebSocket, uuid: str):
         "bytes": 0,
     }
     logger.info(f"âœ… WS [{conn_id}] uuid={uuid[:8]}â€¦ ip={ip} total={len(connections)}")
-    _log_activity("connection", f"Ø§ØªØµØ§Ù„ Ø¬Ø¯ÛŒØ¯ Ø§Ø² {ip} (Ú©Ø§Ù†ÙÛŒÚ¯ {link.get('label','?')})", "info")
+    __log_activity("connection", f"Ø§ØªØµØ§Ù„ Ø¬Ø¯ÛŒØ¯ Ø§Ø² {ip} (Ú©Ø§Ù†ÙÛŒÚ¯ {link.get('label','?')})", "info")
     writer = None
 
     try:
@@ -211,7 +211,7 @@ async def websocket_tunnel(ws: WebSocket, uuid: str):
             except asyncio.CancelledError:
                 pass
 
-        asyncio.create_task(_save_state())
+        asyncio.create_task(__save_state())
 
     except WebSocketDisconnect:
         pass
