@@ -383,7 +383,7 @@ def generate_user_config(user_id: str, user: dict) -> str:
     else:
         path_enc = quote(f"/ws/{config_uuid}", safe='')
 
-    # ── Reality Protocol (PURE TCP ONLY) ──
+    # ── Reality Protocol ──
     if protocol == "reality":
         rs = SETTINGS.get("reality", {})
         reality_pbk = rs.get("public_key", "")
@@ -395,10 +395,22 @@ def generate_user_config(user_id: str, user: dict) -> str:
         # Validate required Reality fields
         if not reality_pbk or not reality_sid:
             return f"vless://{config_uuid}@{ext_domain}:{ext_port}?encryption=none&security=reality&sni={quote(sni_reality)}&fp=chrome&pbk=MISSING_PBK&sid=MISSING_SID&type=tcp#{remark}"
-        # Reality = PURE TCP only. No ws/xhttp/grpc/path/host mixing.
-        params = (f"encryption=none&security=reality&type=tcp"
-                  f"&sni={quote(sni_reality)}&fp=chrome&alpn=h2,http/1.1"
-                  f"&pbk={reality_pbk}&sid={reality_sid}&spx={quote(reality_spx, safe='')}")
+        # Always generate random path (user path field ignored)
+        rpath = f"/{secrets.token_hex(5)}"
+        # Transport: honor user selection, default xhttp
+        rt = user.get("transport_type") or "xhttp"
+        if rt == "xhttp":
+            # Reality + XHTTP: full params with extra
+            extra = quote('{"xPaddingBytes":"100-1000","mode":"auto","scMaxEachPostBytes":"1000000"}', safe='')
+            params = (f"encryption=none&security=reality"
+                      f"&sni={quote(sni_reality)}&fp=chrome"
+                      f"&pbk={reality_pbk}&sid={reality_sid}&spx={quote(reality_spx, safe='')}"
+                      f"&type=xhttp&path={quote(rpath)}&mode=auto&extra={extra}")
+        else:
+            # Reality + TCP default
+            params = (f"encryption=none&security=reality&type=tcp"
+                      f"&sni={quote(sni_reality)}&fp=chrome&alpn=h2,http/1.1"
+                      f"&pbk={reality_pbk}&sid={reality_sid}&spx={quote(reality_spx, safe='')}")
         return f"vless://{config_uuid}@{ext_domain}:{ext_port}?{params}#{remark}"
 
     # ── VLESS ──
