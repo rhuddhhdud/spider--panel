@@ -28,4 +28,6 @@ SUBS_LOCK = asyncio.Lock()
 SETTINGS_LOCK = asyncio.Lock()
 SESSIONS_LOCK = asyncio.Lock()
 GROUPS_LOCK = asyncio.Lock()
+INBOUNDS: dict = {}  # inbound_id -> {name, protocol, port, network, security, domain, sni, external_port, fingerprint, reality_settings, xhttp_settings, created_at}
+INBOUNDS_LOCK = asyncio.Lock()
 IP_LOCK = threading.Lock()

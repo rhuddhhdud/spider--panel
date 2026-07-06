@@ -57,7 +57,7 @@ DATA_FILE = DATA_DIR / "spider_state.json"
 SAVE_LOCK = asyncio.Lock()
 
 async def load_state():
-    global LINKS, AUTH, SUBS, USERS, SETTINGS, GROUPS, IP_POOL, IP_BLACKLIST
+    global LINKS, AUTH, SUBS, USERS, SETTINGS, GROUPS, IP_POOL, IP_BLACKLIST, INBOUNDS
     try:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         if DATA_FILE.exists():
@@ -73,11 +73,12 @@ async def load_state():
             if "settings" in data:
                 SETTINGS.update(data["settings"])
             GROUPS.update(data.get("groups", {}))
+            INBOUNDS.update(data.get("inbounds", {}))
             IP_POOL.clear()
             IP_POOL.extend(data.get("ip_pool", []))
             IP_BLACKLIST.clear()
             IP_BLACKLIST.update(data.get("ip_blacklist", []))
-            logger.info(f"State loaded: {len(LINKS)} links, {len(SUBS)} subs, {len(USERS)} users, {len(GROUPS)} groups, {len(IP_POOL)} ips")
+            logger.info(f"State loaded: {len(LINKS)} links, {len(SUBS)} subs, {len(USERS)} users, {len(GROUPS)} groups, {len(IP_POOL)} ips, {len(INBOUNDS)} inbounds")
     except Exception as e:
         logger.warning(f"Could not load state: {e}")
 
@@ -91,6 +92,7 @@ async def save_state():
                 "subs": dict(SUBS),
                 "settings": dict(SETTINGS),
                 "groups": dict(GROUPS),
+                "inbounds": dict(INBOUNDS),
                 "ip_pool": list(IP_POOL),
                 "ip_blacklist": list(IP_BLACKLIST),
                 "password_hash": AUTH["password_hash"],
@@ -158,6 +160,10 @@ SETTINGS = {
     },
 }
 SETTINGS_LOCK = asyncio.Lock()
+
+# ── Inbounds (for user config generation) ────────────────────────────────
+INBOUNDS: dict = {}  # inbound_id → {name, protocol, port, network, security, domain, sni, external_port, fingerprint, reality_settings, xhttp_settings, created_at}
+INBOUNDS_LOCK = asyncio.Lock()
 
 # ── Groups ─────────────────────────────────────────────────────────────────
 GROUPS: dict = {}  # group_id → {name, description, user_ids, ip_pool, rules, created_at}
@@ -239,6 +245,25 @@ async def startup():
         limits=limits, timeout=timeout, follow_redirects=True,
     )
     await load_state()
+    # Auto-create default inbound if none exist
+    async with INBOUNDS_LOCK:
+        if not INBOUNDS:
+            INBOUNDS["default"] = {
+                "name": "VLESS+WS پیش‌فرض",
+                "protocol": "vless",
+                "port": 443,
+                "network": "ws",
+                "security": "tls",
+                "domain": SETTINGS.get("domain", get_host()),
+                "sni": "",
+                "external_port": 443,
+                "fingerprint": "chrome",
+                "reality_settings": {},
+                "xhttp_settings": {},
+                "created_at": datetime.now().isoformat(),
+            }
+            asyncio.create_task(save_state())
+            log_activity("inbound", "اینباند پیش‌فرض VLESS+WS ساخته شد", "ok")
     log_activity("system", "سرور راه‌اندازی شد", "ok")
     logger.info(f"Spider Gateway v9.2 started on port {CONFIG['port']}")
 
@@ -385,15 +410,19 @@ def generate_short_id() -> str:
     """Generate a shorter ID for user management."""
     return secrets.token_hex(6)
 
-def generate_user_config(user_id: str, user: dict) -> str:
+def generate_user_config(user_id: str, user: dict, inbound_id: str = None) -> str:
     """Generate a connection config string for a user based on their protocol."""
+    # Get settings from inbound if specified
+    inbound = None
+    if inbound_id:
+        inbound = INBOUNDS.get(inbound_id)
     host = SETTINGS.get("domain") or get_host()
     protocol = user.get("protocol", "vless")
     config_uuid = user.get("config_uuid", "")
     username = user.get("username", user_id)
     remark = quote(f"Spider-{username}")
-    sni = user.get("sni") or host
-    transport_type = user.get("transport_type") or "ws"
+    sni = user.get("sni") or (inbound.get("sni") if inbound else None) or host
+    transport_type = user.get("transport_type") or (inbound.get("network") if inbound else None) or "ws"
 
     # ── Path: ALWAYS random, unique per user ──
     # User path field is ignored — system generates random paths
@@ -408,19 +437,24 @@ def generate_user_config(user_id: str, user: dict) -> str:
 
     # ── Reality Protocol ──
     if protocol == "reality":
-        rs = SETTINGS.get("reality", {})
-        xs = SETTINGS.get("xhttp", {})
+        rs = inbound.get("reality_settings", {}) if inbound else SETTINGS.get("reality", {})
+        xs = inbound.get("xhttp_settings", {}) if inbound else SETTINGS.get("xhttp", {})
+        # Fallback to global if inbound settings are empty
+        if not rs:
+            rs = SETTINGS.get("reality", {})
+        if not xs:
+            xs = SETTINGS.get("xhttp", {})
         reality_pbk = rs.get("public_key", "")
         reality_sid = rs.get("short_id", "5a3ff5a13d")
         reality_spx = rs.get("spiderx", "/")
-        reality_fp = rs.get("fingerprint", "chrome")
+        reality_fp = inbound.get("fingerprint") or rs.get("fingerprint", "chrome")
         sni_reality = sni if sni and sni != host else rs.get("sni", "is1-ssl.mzstatic.com")
-        ext_domain = rs.get("external_domain", host)
-        ext_port = rs.get("external_port", 443)
+        ext_domain = inbound.get("domain") or rs.get("external_domain", host)
+        ext_port = inbound.get("external_port") or rs.get("external_port", 443) or 443
         if not reality_pbk or not reality_sid:
             return f"vless://{config_uuid}@{ext_domain}:{ext_port}?encryption=none&security=reality&sni={quote(sni_reality)}&fp={reality_fp}&pbk=MISSING_PBK&sid=MISSING_SID&type=tcp#{remark}"
         rpath = xs.get("path", "/")
-        rt = user.get("transport_type") or "xhttp"
+        rt = user.get("transport_type") or (inbound.get("network") if inbound else None) or "xhttp"
         if rt == "xhttp":
             xpb = xs.get("xPaddingBytes", "100-1000")
             xmod = xs.get("mode", "auto")
@@ -450,7 +484,7 @@ def generate_user_config(user_id: str, user: dict) -> str:
             params = f"encryption=none&security=tls&type=xhttp&host={host}&path={path_enc}&sni={sni}&fp=chrome&alpn=h2,http/1.1&mode=auto&extra={extra}"
             return f"vless://{config_uuid}@{host}:443?{params}#{remark}"
         else:  # ws default — match RVG format exactly
-            ws_host = SETTINGS.get("domain") or host
+            ws_host = (inbound.get("domain") if inbound else None) or SETTINGS.get("domain") or host
             ws_sni = sni if sni and sni != host else ws_host
             ws_path = f"/ws/{config_uuid}"
             params = "&".join([
@@ -1092,6 +1126,117 @@ async def http_proxy(target_url: str, request: Request):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# INBOUNDS MANAGEMENT endpoints
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/inbounds")
+async def list_inbounds(_=Depends(require_auth)):
+    """List all inbounds."""
+    async with INBOUNDS_LOCK:
+        snap = dict(INBOUNDS)
+    result = []
+    for iid, ib in snap.items():
+        result.append({
+            "inbound_id": iid,
+            **ib,
+            "users_count": sum(1 for u in USERS.values() if u.get("inbound_id") == iid),
+        })
+    result.sort(key=lambda x: x.get("created_at") or "", reverse=True)
+    return {"inbounds": result}
+
+
+@app.post("/api/inbounds")
+async def create_inbound(request: Request, _=Depends(require_auth)):
+    """Create a new inbound."""
+    body = await request.json()
+    name = (body.get("name") or "اینباند جدید").strip()[:60]
+    protocol = str(body.get("protocol") or "vless").lower()
+    if protocol not in ("vless", "vmess", "trojan", "reality"):
+        raise HTTPException(status_code=400, detail="Invalid protocol")
+    network = str(body.get("network") or "ws").lower()
+    security = str(body.get("security") or "tls").lower()
+    domain = str(body.get("domain") or "").strip()
+    sni = str(body.get("sni") or "").strip()
+    port = int(body.get("port") or 443)
+    external_port = int(body.get("external_port") or 443)
+    fingerprint = str(body.get("fingerprint") or "chrome").strip()
+    reality_settings = body.get("reality_settings", {}) if isinstance(body.get("reality_settings"), dict) else {}
+    xhttp_settings = body.get("xhttp_settings", {}) if isinstance(body.get("xhttp_settings"), dict) else {}
+
+    inbound_id = generate_short_id()
+    async with INBOUNDS_LOCK:
+        if any(ib.get("name") == name for ib in INBOUNDS.values()):
+            raise HTTPException(status_code=409, detail="Inbound name already exists")
+        INBOUNDS[inbound_id] = {
+            "name": name,
+            "protocol": protocol,
+            "port": port,
+            "network": network,
+            "security": security,
+            "domain": domain,
+            "sni": sni,
+            "external_port": external_port,
+            "fingerprint": fingerprint,
+            "reality_settings": reality_settings,
+            "xhttp_settings": xhttp_settings,
+            "created_at": datetime.now().isoformat(),
+        }
+    asyncio.create_task(save_state())
+    log_activity("inbound", f"اینباند «{name}» با پروتکل {protocol.upper()} ساخته شد", "ok")
+    return {"ok": True, "inbound_id": inbound_id, **INBOUNDS[inbound_id]}
+
+
+@app.patch("/api/inbounds/{inbound_id}")
+async def update_inbound(inbound_id: str, request: Request, _=Depends(require_auth)):
+    """Update an existing inbound."""
+    body = await request.json()
+    async with INBOUNDS_LOCK:
+        ib = INBOUNDS.get(inbound_id)
+        if not ib:
+            raise HTTPException(status_code=404, detail="inbound not found")
+        if "name" in body:
+            ib["name"] = str(body["name"]).strip()[:60]
+        if "protocol" in body:
+            p = str(body["protocol"]).lower()
+            if p in ("vless", "vmess", "trojan", "reality"):
+                ib["protocol"] = p
+        if "port" in body:
+            ib["port"] = int(body["port"])
+        if "network" in body:
+            ib["network"] = str(body["network"]).lower()
+        if "security" in body:
+            ib["security"] = str(body["security"]).lower()
+        if "domain" in body:
+            ib["domain"] = str(body["domain"]).strip()
+        if "sni" in body:
+            ib["sni"] = str(body["sni"]).strip()
+        if "external_port" in body:
+            ib["external_port"] = int(body["external_port"])
+        if "fingerprint" in body:
+            ib["fingerprint"] = str(body["fingerprint"]).strip()
+        if "reality_settings" in body and isinstance(body["reality_settings"], dict):
+            ib["reality_settings"] = body["reality_settings"]
+        if "xhttp_settings" in body and isinstance(body["xhttp_settings"], dict):
+            ib["xhttp_settings"] = body["xhttp_settings"]
+    asyncio.create_task(save_state())
+    log_activity("inbound", f"اینباند «{ib.get('name', inbound_id)}» ویرایش شد", "info")
+    return {"ok": True}
+
+
+@app.delete("/api/inbounds/{inbound_id}")
+async def delete_inbound(inbound_id: str, _=Depends(require_auth)):
+    """Delete an inbound."""
+    async with INBOUNDS_LOCK:
+        ib = INBOUNDS.pop(inbound_id, None)
+        if not ib:
+            raise HTTPException(status_code=404, detail="inbound not found")
+        name = ib.get("name", inbound_id)
+    asyncio.create_task(save_state())
+    log_activity("inbound", f"اینباند «{name}» حذف شد", "err")
+    return {"ok": True, "deleted": inbound_id}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # USER MANAGEMENT endpoints
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -1122,6 +1267,8 @@ async def list_users(_=Depends(require_auth)):
             "server": u.get("server", ""),
             "config_uuid": u.get("config_uuid"),
             "subscription_uuid": u.get("subscription_uuid"),
+            "inbound_id": u.get("inbound_id"),
+            "inbound_name": INBOUNDS.get(u.get("inbound_id", ""), {}).get("name", "") if u.get("inbound_id") else "",
             "config_url": f"https://{host}/api/users/{uid}/config",
             "qr_url": f"https://{host}/api/users/{uid}/qr",
             "subscription_url": f"https://{host}/api/users/{uid}/subscription",
@@ -1144,6 +1291,7 @@ async def create_user(request: Request, _=Depends(require_auth)):
     sni = str(body.get("sni") or "").strip()
     path_custom = str(body.get("path") or "").strip()
     transport_type = str(body.get("transport_type") or "ws").strip().lower()
+    inbound_id = str(body.get("inbound_id") or "").strip() or None
 
     if transport_type not in ("ws", "grpc", "tcp", "xhttp", "reality"):
         transport_type = "ws"
@@ -1210,6 +1358,7 @@ async def create_user(request: Request, _=Depends(require_auth)):
             "sni": sni,
             "path": path_custom,
             "transport_type": transport_type,
+            "inbound_id": inbound_id,
         }
 
     asyncio.create_task(save_state())
@@ -1222,7 +1371,7 @@ async def create_user(request: Request, _=Depends(require_auth)):
         "config_url": f"https://{host}/api/users/{user_id}/config",
         "qr_url": f"https://{host}/api/users/{user_id}/qr",
         "subscription_url": f"https://{host}/api/users/{user_id}/subscription",
-        "config": generate_user_config(user_id, USERS[user_id]),
+        "config": generate_user_config(user_id, USERS[user_id], inbound_id),
     }
 
 @app.patch("/api/users/{user_id}/toggle")
@@ -1329,7 +1478,7 @@ async def get_single_user(user_id: str, _=Depends(require_auth)):
     host = SETTINGS.get("domain") or get_host()
     return {
         **user,
-        "config": generate_user_config(user_id, user),
+        "config": generate_user_config(user_id, user, user.get("inbound_id")),
         "config_url": f"https://{host}/api/users/{user_id}/config",
         "qr_url": f"https://{host}/api/users/{user_id}/qr",
         "subscription_url": f"https://{host}/api/users/{user_id}/subscription",
@@ -1400,7 +1549,7 @@ async def get_user_config(user_id: str, _=Depends(require_auth)):
         u = USERS.get(user_id)
         if not u:
             raise HTTPException(status_code=404, detail="user not found")
-        config = generate_user_config(user_id, u)
+        config = generate_user_config(user_id, u, u.get("inbound_id"))
         username = u.get("username")
         protocol = u.get("protocol")
     host = SETTINGS.get("domain") or get_host()
@@ -1424,7 +1573,7 @@ async def get_user_qr(user_id: str, _=Depends(require_auth)):
         u = USERS.get(user_id)
         if not u:
             raise HTTPException(status_code=404, detail="user not found")
-        config = generate_user_config(user_id, u)
+        config = generate_user_config(user_id, u, u.get("inbound_id"))
 
     # Generate QR code
     qr = qrcode.QRCode(version=1, box_size=10, border=4, error_correction=qrcode.constants.ERROR_CORRECT_M)
@@ -1451,7 +1600,7 @@ async def get_user_subscription(user_id: str, _=Depends(require_auth)):
     if not sub_uuid:
         raise HTTPException(status_code=404, detail="no subscription configured")
 
-    config = generate_user_config(user_id, u)
+    config = generate_user_config(user_id, u, u.get("inbound_id"))
     content = base64.b64encode(config.encode()).decode()
 
     return {
@@ -1607,7 +1756,7 @@ async def api_user_sub(username: str):
     limit = user.get("traffic_limit_bytes", 0)
     traffic_pct = round(used / max(limit, 1) * 100, 1) if limit > 0 else 0
 
-    config = generate_user_config(user.get("user_id"), user)
+    config = generate_user_config(user.get("user_id"), user, user.get("inbound_id"))
 
     return {
         "username": user.get("username"),
@@ -1825,7 +1974,7 @@ async def subsync_get_sub(name: str):
             user = next(((uid, u) for uid, u in USERS.items() if u.get("username") == name), None)
         if user:
             uid, u = user
-            cfg = generate_user_config(uid, u)
+            cfg = generate_user_config(uid, u, u.get("inbound_id"))
             if cfg:
                 configs.append(cfg)
     
@@ -2044,7 +2193,7 @@ async def group_subscription(group_id: str, _=Depends(require_auth)):
     for uid in user_ids:
         u = snap.get(uid)
         if u and is_user_allowed(u):
-            cfg = generate_user_config(uid, u)
+            cfg = generate_user_config(uid, u, u.get("inbound_id"))
             if cfg:
                 configs.append(cfg)
 
