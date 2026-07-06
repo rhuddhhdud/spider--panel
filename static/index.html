@@ -446,11 +446,11 @@ function buildFromIPs(){if(!siIPs.length){toast('اول اسکن کن','err');re
   el.style.display='block';el.textContent=out;curCfg=out}
 
 // ═══════ REALITY ═══════
-async function loadRealitySettings(){try{var d=await api('/api/tools/reality-settings');$id('rs-port').value=d.port||1234;$id('rs-dest').value=d.dest||'google.com:443';$id('rs-sni').value=d.sni||'';$id('rs-pbk').value=d.public_key||'';$id('rs-sid').value=d.short_id||'6ba85179e30d4fc2';$id('rs-spx').value=d.spiderx||'/';$id('rs-ext-domain').value=d.external_domain||'';$id('rs-ext-port').value=d.external_port||443;$id('rs-domain').value=d.domain||'';renderDomainHistory(d.domain_history||[])}catch(e){}}
+async function loadRealitySettings(){try{var d=await api('/api/tools/reality-settings');$id('rs-port').value=d.port||1234;$id('rs-dest').value=d.dest||'google.com:443';$id('rs-sni').value=d.sni||'';$id('rs-pbk').value=d.public_key||'';$id('rs-sid').value=d.short_id||'6ba85179e30d4fc2';$id('rs-spx').value=d.spiderx||'/';$id('rs-fp').value=d.fingerprint||'chrome';$id('rs-dest').value=d.dest||'is1-ssl.mzstatic.com:443';$id('rs-ext-domain').value=d.external_domain||'';$id('rs-ext-port').value=d.external_port||443;$id('rs-domain').value=d.domain||'';renderDomainHistory(d.domain_history||[])}catch(e){}}
 async function saveRealitySettings(){
   var ep=parseInt($id('rs-ext-port').value);
   if(isNaN(ep)||ep<1)ep=443;
-  var body={port:parseInt($id('rs-port').value)||1234,dest:$id('rs-dest').value,sni:$id('rs-sni').value,public_key:$id('rs-pbk').value,short_id:$id('rs-sid').value,spiderx:$id('rs-spx').value,external_domain:$id('rs-ext-domain').value,external_port:ep,domain:$id('rs-domain').value};
+  var body={port:parseInt($id('rs-port').value)||1234,dest:$id('rs-dest').value,sni:$id('rs-sni').value,public_key:$id('rs-pbk').value,short_id:$id('rs-sid').value,spiderx:$id('rs-spx').value,fingerprint:$id('rs-fp').value,dest:$id('rs-dest').value,external_domain:$id('rs-ext-domain').value,external_port:ep,domain:$id('rs-domain').value};
   try{
     await api('/api/tools/reality-settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     toast('External Port: '+ep,'ok');

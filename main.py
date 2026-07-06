@@ -133,6 +133,29 @@ SETTINGS = {
     "live_monitoring": True,
     "auto_ip_rotation": False,
     "security_token": secrets.token_urlsafe(16),
+    # Reality defaults (3x-ui style)
+    "reality": {
+        "port": 1234,
+        "dest": "is1-ssl.mzstatic.com:443",
+        "sni": "is1-ssl.mzstatic.com",
+        "public_key": "",
+        "private_key": "",
+        "short_id": "5a3ff5a13d",
+        "spiderx": "/",
+        "fingerprint": "chrome",
+        "external_domain": "",
+        "external_port": 443,
+    },
+    # XHTTP settings (3x-ui style)
+    "xhttp": {
+        "path": "/",
+        "host": "",
+        "mode": "auto",
+        "xPaddingBytes": "100-1000",
+        "scMaxEachPostBytes": "1000000",
+        "scMaxBufferedPosts": 30,
+        "scStreamUpServerSecs": "20-80",
+    },
 }
 SETTINGS_LOCK = asyncio.Lock()
 
@@ -386,30 +409,31 @@ def generate_user_config(user_id: str, user: dict) -> str:
     # ── Reality Protocol ──
     if protocol == "reality":
         rs = SETTINGS.get("reality", {})
+        xs = SETTINGS.get("xhttp", {})
         reality_pbk = rs.get("public_key", "")
-        reality_sid = rs.get("short_id", "6ba85179e30d4fc2")
+        reality_sid = rs.get("short_id", "5a3ff5a13d")
         reality_spx = rs.get("spiderx", "/")
-        sni_reality = sni if sni and sni != host else rs.get("sni", "www.google.com")
+        reality_fp = rs.get("fingerprint", "chrome")
+        sni_reality = sni if sni and sni != host else rs.get("sni", "is1-ssl.mzstatic.com")
         ext_domain = rs.get("external_domain", host)
         ext_port = rs.get("external_port", 443)
-        # Validate required Reality fields
         if not reality_pbk or not reality_sid:
-            return f"vless://{config_uuid}@{ext_domain}:{ext_port}?encryption=none&security=reality&sni={quote(sni_reality)}&fp=chrome&pbk=MISSING_PBK&sid=MISSING_SID&type=tcp#{remark}"
-        # Path: always / for Reality
-        rpath = "/"
-        # Transport: honor user selection, default xhttp
+            return f"vless://{config_uuid}@{ext_domain}:{ext_port}?encryption=none&security=reality&sni={quote(sni_reality)}&fp={reality_fp}&pbk=MISSING_PBK&sid=MISSING_SID&type=tcp#{remark}"
+        rpath = xs.get("path", "/")
         rt = user.get("transport_type") or "xhttp"
         if rt == "xhttp":
-            # Reality + XHTTP: full params with extra
-            extra = quote('{"xPaddingBytes":"100-1000","mode":"auto","scMaxEachPostBytes":"1000000"}', safe='')
+            xpb = xs.get("xPaddingBytes", "100-1000")
+            xmod = xs.get("mode", "auto")
+            xsc = xs.get("scMaxEachPostBytes", "1000000")
+            extra_raw = '{{"xPaddingBytes":"{}","mode":"{}","scMaxEachPostBytes":"{}"}}'.format(xpb, xmod, xsc)
+            extra = quote(extra_raw, safe='')
             params = (f"encryption=none&security=reality"
-                      f"&sni={quote(sni_reality)}&fp=chrome"
+                      f"&sni={quote(sni_reality)}&fp={reality_fp}"
                       f"&pbk={reality_pbk}&sid={reality_sid}&spx={quote(reality_spx, safe='')}"
-                      f"&type=xhttp&path={quote(rpath)}&mode=auto&extra={extra}")
+                      f"&type=xhttp&path={quote(rpath)}&mode={xmod}&extra={extra}")
         else:
-            # Reality + TCP default
             params = (f"encryption=none&security=reality&type=tcp"
-                      f"&sni={quote(sni_reality)}&fp=chrome&alpn=h2,http/1.1"
+                      f"&sni={quote(sni_reality)}&fp={reality_fp}&alpn=h2,http/1.1"
                       f"&pbk={reality_pbk}&sid={reality_sid}&spx={quote(reality_spx, safe='')}")
         return f"vless://{config_uuid}@{ext_domain}:{ext_port}?{params}#{remark}"
 
@@ -1152,12 +1176,17 @@ async def create_user(request: Request, _=Depends(require_auth)):
                     import base64 as b64
                     reality["private_key"] = b64.b64encode(priv_bytes).decode()
                     reality["public_key"] = b64.b64encode(pub_bytes).decode()
-                    reality["short_id"] = reality.get("short_id") or secrets.token_hex(8)[:16]
+                    reality.setdefault("short_id", secrets.token_hex(4)[:10])
+                    reality.setdefault("dest", "is1-ssl.mzstatic.com:443")
+                    reality.setdefault("sni", "is1-ssl.mzstatic.com")
+                    reality.setdefault("spiderx", "/")
+                    reality.setdefault("fingerprint", "chrome")
+                    reality.setdefault("external_port", 443)
                     SETTINGS["reality"] = reality
                     asyncio.create_task(save_state())
-                    log_activity("settings", "کلید Reality خودکار ساخته شد", "ok")
+                    log_activity("settings", "کلیدهای Reality خودکار ساخته شد", "ok")
                 except ImportError:
-                    pass  # cryptography not installed, use existing or empty key
+                    pass
 
     async with USERS_LOCK:
         # Check for duplicate username
@@ -1637,6 +1666,8 @@ async def get_reality_settings(_=Depends(require_auth)):
         "public_key": reality.get("public_key", ""),
         "short_id": reality.get("short_id", "6ba85179e30d4fc2"),
         "spiderx": reality.get("spiderx", "/"),
+        "fingerprint": reality.get("fingerprint", "chrome"),
+        "dest": reality.get("dest", "is1-ssl.mzstatic.com:443"),
         "external_domain": reality.get("external_domain", host),
         "external_port": reality.get("external_port", 443),
         "domain": reality.get("domain", host),
