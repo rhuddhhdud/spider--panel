@@ -455,83 +455,25 @@ tr{animation:fadeIn .3s ease}
       <div class="tab-content hidden" id="tab-spider-ip">
         <!-- Scanner -->
         <div class="panel">
-          <div class="panel-h"><span class="glow">اسکنر زنده Cloudflare</span></div>
-          <div class="f-r" style="margin-bottom:12px">
-            <div class="f-g"><label>تعداد آی‌پی</label><input type="number" id="ipCount" value="6" min="1" max="100"></div>
-            <div class="f-g"><label>اپراتور</label><select id="operatorSelect">
-              <option value="all">همه رنج‌ها</option>
-              <option value="mci">همراه اول (MCI)</option>
-              <option value="mtn">ایرانسل (MTN)</option>
-              <option value="ict">مخابرات و شاتل</option>
-            </select></div>
+          <div class="panel-h"><span class="glow">[Scanner] Railway IP & Ping Test</span></div>
+          <div style="margin-bottom:12px;font-size:11px;color:var(--txt2);line-height:1.6">
+            Test ping to Railway regions and famous websites. Results show latency in ms.
           </div>
-          <div class="port-check-row" style="margin-bottom:12px">
-            <label><input type="checkbox" id="port443" checked> 443</label>
-            <label><input type="checkbox" id="port853"> 853</label>
-            <label><input type="checkbox" id="port2053"> 2053</label>
-            <label><input type="checkbox" id="port2083"> 2083</label>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+            <button class="btn btn-p" onclick="scanRailwayIPs()" style="flex:1;justify-content:center">Scan Railway Regions</button>
+            <button class="btn btn-b" onclick="pingFamousSites()" style="flex:1;justify-content:center">Ping Famous Sites</button>
+            <button class="btn btn-g" onclick="getMyIP()" style="flex:1;justify-content:center">Show My IP</button>
           </div>
-          <div id="scanProgress" style="display:none;margin-bottom:12px">
-            <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:4px">
-              <span id="scanStatus">...</span><span id="scanCount" style="color:var(--neon)">۰ / ۰</span>
-            </div>
-            <div class="pbar"><div class="pbar-f" id="scanBar" style="width:0%"></div></div>
+          <div id="spiderIpStatus" style="display:none;font-size:11px;color:var(--txt2);margin-bottom:8px"></div>
+          <div id="spiderIpLoader" style="display:none;margin-bottom:8px">
+            <div class="pbar"><div class="pbar-f" style="width:100%;animation:sh 1.5s infinite"></div></div>
           </div>
-          <button class="btn btn-p" id="startBtn" onclick="runScanner()" style="width:100%;justify-content:center">شروع آنالیز زنده شبکه</button>
-          <div id="scanResults" style="display:none;margin-top:16px">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-              <span style="font-size:13px;font-weight:600">آی‌پی‌های یافت شده:</span>
-              <button class="btn btn-sm btn-gr" onclick="copyAllIpsOnly()">کپی IP</button>
-            </div>
-            <div id="ipList"></div>
-          </div>
-        </div>
-
-        <!-- Tools -->
-        <div class="panel">
-          <div class="panel-h"><span class="glow">ابزارهای حرفه‌ای</span></div>
-          <div class="f-g"><label>فیلتر حداکثر پینگ (ms)</label><input type="range" id="pingFilterRange" min="50" max="900" value="900" oninput="applyPingFilter(this.value)" style="accent-color:var(--neon)"><span id="pingFilterVal" style="font-size:11px;color:var(--neon)">همه</span></div>
-          <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
-            <button class="btn btn-sm btn-b" onclick="toggleChart()">نمودار مقایسه</button>
-            <button class="btn btn-sm btn-gr" onclick="exportFormat('ipport')">کپی IP:Port</button>
-            <button class="btn btn-sm btn-g" onclick="exportFormat('clash')">Clash YAML</button>
-            <button class="btn btn-sm btn-b" onclick="exportFormat('v2ray')">V2Ray JSON</button>
-          </div>
-          <div class="chart-wrap" id="chartWrap"><div style="font-size:11px;color:var(--txt2);margin-bottom:8px;font-weight:700">مقایسه پینگ (ms)</div><div class="chart-bars" id="chartBars"></div></div>
-        </div>
-
-        <!-- Config Builder -->
-        <div class="panel">
-          <div class="panel-h"><span class="glow">سازنده کانفیگ</span></div>
-          <div class="cfg-tabs">
-            <button class="cfg-tab active" onclick="setCfgTab('vless',this)">VLESS</button>
-            <button class="cfg-tab" onclick="setCfgTab('vmess',this)">VMess</button>
-            <button class="cfg-tab" onclick="setCfgTab('clash',this)">Clash</button>
-            <button class="cfg-tab" onclick="setCfgTab('singbox',this)">Sing-Box</button>
-          </div>
-          <div class="f-r">
-            <div class="cfg-field"><label>UUID</label><div style="display:flex;gap:6px"><input type="text" id="cfgUUID" placeholder="00000000-0000..." dir="ltr"><button class="btn btn-sm btn-g" type="button" onclick="genUUID()">تولید</button></div></div>
-            <div class="cfg-field"><label>SNI</label><input type="text" id="cfgSNI" value="cloudflare.com" dir="ltr"></div>
-          </div>
-          <div class="f-r">
-            <div class="cfg-field"><label>امنیت</label><select id="cfgSecurity"><option value="tls">TLS</option><option value="none">None</option></select></div>
-            <div class="cfg-field"><label>شبکه</label><select id="cfgNetwork"><option value="ws">WS</option><option value="tcp">TCP</option><option value="grpc">gRPC</option></select></div>
-          </div>
-          <div class="cfg-field"><label>Path</label><input type="text" id="cfgPath" value="/" dir="ltr"></div>
-          <div class="cfg-field"><label>آی‌پی‌ها (هر خط یک IP یا IP:Port)</label><textarea id="cfgIPs" placeholder="1.1.1.1:443" dir="ltr"></textarea></div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <button class="btn btn-p" onclick="buildConfig()">ساخت کانفیگ</button>
-            <button class="btn btn-sm btn-b" onclick="importFromScanner()">وارد کردن از اسکنر</button>
-          </div>
-          <div id="cfgOutput" style="display:none;margin-top:14px">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-              <span id="cfgOutLabel" style="font-size:12px;font-weight:700;color:var(--green)"></span>
-              <div style="display:flex;gap:4px">
-                <button class="btn btn-sm btn-gr" onclick="copyCfg()">کپی</button>
-                <button class="btn btn-sm btn-g" onclick="downloadCfg()">دانلود</button>
-              </div>
-            </div>
-            <pre id="cfgPre" style="background:rgba(0,0,0,.3);border-radius:8px;padding:12px;font-family:monospace;font-size:11px;direction:ltr;max-height:240px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;color:var(--txt)"></pre>
+          <div id="spiderIpResults" style="display:none"></div>
+          <div id="spiderIpTable" style="display:none;overflow-x:auto">
+            <table style="width:100%;font-size:11px;border-collapse:collapse;color:var(--txt)">
+              <thead><tr style="border-bottom:1px solid var(--border)"><th style="padding:8px;text-align:left;color:var(--txt2)">Target</th><th style="padding:8px;text-align:right;color:var(--txt2)">Latency</th><th style="padding:8px;text-align:right;color:var(--txt2)">Status</th></tr></thead>
+              <tbody id="spiderIpTbody"></tbody>
+            </table>
           </div>
         </div>
       </div>
@@ -562,7 +504,46 @@ tr{animation:fadeIn .3s ease}
         </div>
 
         <div class="panel">
-          <div class="panel-h"><span class="glow">تغییر رمز عبور</span></div>
+          <div class="panel-h"><span class="glow">[Upload] Custom Backgrounds</span></div>
+          <div class="set-row"><span class="set-lbl">Login Background</span>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input type="file" id="bg-login-file" accept="image/*" onchange="uploadBg('login')" style="font-size:11px;max-width:140px">
+              <button class="btn btn-sm btn-g" onclick="removeBg('login')">Remove</button>
+            </div>
+          </div>
+          <div class="set-row"><span class="set-lbl">Dashboard BG</span>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input type="file" id="bg-dashboard-file" accept="image/*" onchange="uploadBg('dashboard')" style="font-size:11px;max-width:140px">
+              <button class="btn btn-sm btn-g" onclick="removeBg('dashboard')">Remove</button>
+            </div>
+          </div>
+          <div class="set-row"><span class="set-lbl">Sub Page BG</span>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input type="file" id="bg-sub-file" accept="image/*" onchange="uploadBg('sub')" style="font-size:11px;max-width:140px">
+              <button class="btn btn-sm btn-g" onclick="removeBg('sub')">Remove</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-h"><span class="glow">[Upload] Panel Music</span></div>
+          <div class="set-row"><span class="set-lbl">Audio File</span>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input type="file" id="audio-file" accept="audio/*" onchange="uploadAudio()" style="font-size:11px;max-width:140px">
+              <button class="btn btn-sm btn-g" onclick="removeAudio()">Remove</button>
+            </div>
+          </div>
+          <div class="set-row"><span class="set-lbl">Auto-play</span>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--txt2)">
+              <input type="checkbox" id="audio-autoplay" onchange="toggleAudioAutoplay()">
+              Play music when panel opens
+            </label>
+          </div>
+          <audio id="panel-audio-player" loop style="display:none"></audio>
+        </div>
+
+        <div class="panel">
+          <div class="panel-h"><span class="glow">Change Password</span></div>
           <form onsubmit="changePassword(event)">
             <div class="f-g"><label>رمز فعلی</label><input type="password" id="cp-old" required></div>
             <div class="f-g"><label>رمز جدید</label><input type="password" id="cp-new" required minlength="4"></div>
@@ -1555,6 +1536,24 @@ var iconUsers = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" str
 var iconTraffic = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>';
 var iconConn = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>';
 var iconUptime = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>';
+
+// ─── IP Scanner & Ping ───
+async function scanRailwayIPs(){var s=$id('spiderIpStatus'),l=$id('spiderIpLoader'),r=$id('spiderIpResults'),t=$id('spiderIpTable'),b=$id('spiderIpTbody');s.style.display='block';s.textContent='Scanning Railway regions...';l.style.display='block';r.style.display='none';t.style.display='none';try{var d=await api('/api/tools/scan-railway-ips');b.innerHTML=d.regions.map(function(x){var c=x.status==='ok'?'#00e676':x.status==='slow'?'#ffab00':'#ef4444';return'<tr style="border-bottom:1px solid var(--border)"><td style="padding:8px;font-size:11px">'+esc(x.region)+'</td><td style="padding:8px;text-align:right;font-size:12px;font-weight:700;color:'+c+'">'+(x.latency_ms!=null?x.latency_ms.toFixed(1)+' ms':'FAIL')+'</td><td style="padding:8px;text-align:right;font-size:10px;color:'+c+'">'+x.status+'</td></tr>'}).join('');t.style.display='block';s.textContent='Done - '+d.regions.length+' regions tested'}catch(e){s.textContent='Error: '+e.message}l.style.display='none'}
+async function pingFamousSites(){var s=$id('spiderIpStatus'),l=$id('spiderIpLoader'),r=$id('spiderIpResults'),t=$id('spiderIpTable'),b=$id('spiderIpTbody');s.style.display='block';s.textContent='Pinging famous sites...';l.style.display='block';r.style.display='none';t.style.display='none';try{var d=await api('/api/tools/ping-sites');b.innerHTML=d.sites.map(function(x){var c=x.status==='ok'?'#00e676':x.status==='slow'?'#ffab00':'#ef4444';return'<tr style="border-bottom:1px solid var(--border)"><td style="padding:8px;font-size:11px;font-weight:600">'+esc(x.name)+'<br><span style="font-size:9px;color:var(--txt2)">'+esc(x.host)+'</span></td><td style="padding:8px;text-align:right;font-size:12px;font-weight:700;color:'+c+'">'+(x.latency_ms!=null?x.latency_ms.toFixed(1)+' ms':'FAIL')+'</td><td style="padding:8px;text-align:right;font-size:10px;color:'+c+'">'+x.status+'</td></tr>'}).join('');t.style.display='block';s.textContent='Done - '+d.sites.length+' sites tested'}catch(e){s.textContent='Error: '+e.message}l.style.display='none'}
+async function getMyIP(){var s=$id('spiderIpStatus'),l=$id('spiderIpLoader');s.style.display='block';s.textContent='Getting server IP...';l.style.display='block';try{var d=await api('/api/tools/my-ip');var html='<div style="background:var(--surface);border-radius:8px;padding:12px;margin-bottom:8px;font-family:monospace;font-size:12px">';for(var k in d.ips){html+='<div style="display:flex;justify-content:space-between;padding:4px 0"><span style="color:var(--txt2)">'+esc(k)+'</span><span style="color:var(--neon);font-weight:700">'+esc(d.ips[k]||'N/A')+'</span></div>'}
+if(d.railway_url)html+='<div style="display:flex;justify-content:space-between;padding:4px 0"><span style="color:var(--txt2)">Railway URL</span><span style="color:var(--neon);font-weight:700">'+esc(d.railway_url)+'</span></div>';html+='</div>';$id('spiderIpResults').innerHTML=html;$id('spiderIpResults').style.display='block';s.textContent='IP info loaded'}catch(e){s.textContent='Error: '+e.message}l.style.display='none'}
+
+// ─── Upload Backgrounds ───
+async function uploadBg(type){var f=document.getElementById('bg-'+type+'-file');if(!f||!f.files[0])return;var fd=new FormData();fd.append('file',f.files[0]);fd.append('type',type);try{var r=await fetch('/api/upload/background',{method:'POST',body:fd,headers:{'Authorization':'Bearer '+getCookie('spider_session')}});var d=await r.json();if(d.ok){toast('Background uploaded!','ok');if(type==='dashboard')document.body.style.backgroundImage='url('+d.url+')'}}catch(e){toast('Upload failed','err')}}
+async function removeBg(type){try{var d=await api('/api/settings/background/remove',{method:'POST',body:{type:type}});if(d.ok){toast('Background removed','ok');if(type==='dashboard')document.body.style.backgroundImage=''}}catch(e){toast('Remove failed','err')}}
+
+// ─── Upload Audio ───
+async function uploadAudio(){var f=document.getElementById('audio-file');if(!f||!f.files[0])return;var fd=new FormData();fd.append('file',f.files[0]);try{var r=await fetch('/api/upload/audio',{method:'POST',body:fd,headers:{'Authorization':'Bearer '+getCookie('spider_session')}});var d=await r.json();if(d.ok){toast('Audio uploaded!','ok');var p=$id('panel-audio-player');p.src=d.url;p.style.display='block';if($id('audio-autoplay').checked)p.play()}}catch(e){toast('Upload failed','err')}}
+async function removeAudio(){try{var d=await api('/api/settings/audio/remove',{method:'POST'});if(d.ok){toast('Audio removed','ok');var p=$id('panel-audio-player');p.pause();p.style.display='none'}}catch(e){toast('Remove failed','err')}}
+function toggleAudioAutoplay(){var p=$id('panel-audio-player');if(p.src&&$id('audio-autoplay').checked)p.play();else p.pause()}
+
+// ─── Load saved audio on startup ───
+(function initAudio(){api('/api/tools/settings').then(function(d){if(d.panel_audio){var p=$id('panel-audio-player');p.src=d.panel_audio;p.style.display='block';$id('audio-autoplay').checked=!!d.panel_audio_enabled}}).catch(function(){})})();
 
 </script>
 </body>

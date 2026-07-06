@@ -140,6 +140,13 @@ SETTINGS = {
     "live_monitoring": True,
     "auto_ip_rotation": False,
     "security_token": secrets.token_urlsafe(16),
+    # Custom backgrounds (uploaded by admin)
+    "bg_login": "",
+    "bg_dashboard": "",
+    "bg_sub": "",
+    # Panel audio (uploaded by admin)
+    "panel_audio": "",
+    "panel_audio_enabled": False,
     # Reality defaults (3x-ui style)
     "reality": {
         "port": 1234,
@@ -480,7 +487,7 @@ def generate_user_config(user_id: str, user: dict, inbound_id: str = None) -> st
         reality_spx = rs.get("spiderx", "/")
         reality_fp = inbound.get("fingerprint") or rs.get("fingerprint", "chrome")
         sni_reality = sni if sni and sni != host else rs.get("sni", "is1-ssl.mzstatic.com")
-        ext_domain = inbound.get("domain") or rs.get("external_domain", host)
+        ext_domain = inbound.get("external_domain") or inbound.get("domain") or rs.get("external_domain") or host
         ext_port = inbound.get("external_port") or rs.get("external_port", 443) or 443
         if not reality_pbk or not reality_sid:
             return f"vless://{config_uuid}@{ext_domain}:{ext_port}?encryption=none&security=reality&sni={quote(sni_reality)}&fp={reality_fp}&pbk=MISSING_PBK&sid=MISSING_SID&type=tcp#{remark}"
@@ -1198,6 +1205,7 @@ async def create_inbound(request: Request, _=Depends(require_auth)):
     network = str(body.get("network") or "ws").lower()
     security = str(body.get("security") or "tls").lower()
     domain = str(body.get("domain") or "").strip()
+    external_domain = str(body.get("external_domain") or "").strip()
     sni = str(body.get("sni") or "").strip()
     port = int(body.get("port") or 443)
     external_port = int(body.get("external_port") or 443)
@@ -1206,6 +1214,37 @@ async def create_inbound(request: Request, _=Depends(require_auth)):
     xhttp_settings = body.get("xhttp_settings", {}) if isinstance(body.get("xhttp_settings"), dict) else {}
     ws_settings = body.get("ws_settings", {}) if isinstance(body.get("ws_settings"), dict) else {}
     grpc_settings = body.get("grpc_settings", {}) if isinstance(body.get("grpc_settings"), dict) else {}
+
+    # Auto-generate Reality key pair + short_id if protocol is reality
+    if protocol == "reality":
+        from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+        from cryptography.hazmat.primitives import serialization
+        if not reality_settings.get("private_key") or not reality_settings.get("public_key"):
+            priv = X25519PrivateKey.generate()
+            priv_bytes = priv.private_bytes(
+                encoding=serialization.Encoding.Raw,
+                format=serialization.PrivateFormat.Raw,
+                encryption_algorithm=serialization.NoEncryption(),
+            )
+            pub_bytes = priv.public_key().public_bytes(
+                encoding=serialization.Encoding.Raw,
+                format=serialization.PublicFormat.Raw,
+            )
+            reality_settings["private_key"] = base64.b64encode(priv_bytes).decode()
+            reality_settings["public_key"] = base64.b64encode(pub_bytes).decode()
+            logger.info("Auto-generated Reality x25519 key pair for inbound")
+        if not reality_settings.get("short_id"):
+            reality_settings["short_id"] = secrets.token_hex(5)[:10]  # 10-char hex like 3x-ui
+        reality_settings.setdefault("dest", "is1-ssl.mzstatic.com:443")
+        reality_settings.setdefault("spiderx", "/")
+        # Set security to "reality" for Reality protocol
+        security = "reality"
+        # If no external_domain provided, use domain or host
+        if not external_domain:
+            external_domain = domain or CONFIG.get("host", "")
+        # Network defaults to tcp for Reality (can also be xhttp)
+        if network not in ("tcp", "xhttp", "grpc"):
+            network = "tcp"
 
     inbound_id = generate_short_id()
     async with INBOUNDS_LOCK:
@@ -1218,6 +1257,7 @@ async def create_inbound(request: Request, _=Depends(require_auth)):
             "network": network,
             "security": security,
             "domain": domain,
+            "external_domain": external_domain,
             "sni": sni,
             "external_port": external_port,
             "fingerprint": fingerprint,
@@ -1227,7 +1267,7 @@ async def create_inbound(request: Request, _=Depends(require_auth)):
             "grpc_settings": grpc_settings,
             "created_at": datetime.now().isoformat(),
         }
-    asyncio.create_task(save_state())
+    await save_state()
     log_activity("inbound", f"اینباند «{name}» با پروتکل {protocol.upper()} ساخته شد", "ok")
     return {"ok": True, "inbound_id": inbound_id, **INBOUNDS[inbound_id]}
 
@@ -1254,6 +1294,8 @@ async def update_inbound(inbound_id: str, request: Request, _=Depends(require_au
             ib["security"] = str(body["security"]).lower()
         if "domain" in body:
             ib["domain"] = str(body["domain"]).strip()
+        if "external_domain" in body:
+            ib["external_domain"] = str(body["external_domain"]).strip()
         if "sni" in body:
             ib["sni"] = str(body["sni"]).strip()
         if "external_port" in body:
@@ -1926,6 +1968,11 @@ async def get_global_settings(_=Depends(require_auth)):
         "xhttp_mode": SETTINGS.get("xhttp_mode", True),
         "websocket_mode": SETTINGS.get("websocket_mode", True),
         "default_connection_mode": SETTINGS.get("default_connection_mode", "ws"),
+        "bg_login": SETTINGS.get("bg_login", ""),
+        "bg_dashboard": SETTINGS.get("bg_dashboard", ""),
+        "bg_sub": SETTINGS.get("bg_sub", ""),
+        "panel_audio": SETTINGS.get("panel_audio", ""),
+        "panel_audio_enabled": SETTINGS.get("panel_audio_enabled", False),
     }
 
 @app.post("/api/tools/settings")
@@ -2676,6 +2723,278 @@ async def server_stats_http(_=Depends(require_auth)):
 
 
 # ── Static files mount (MUST be after all routes) ──
+# ── Static files mount (MUST be after all routes) ──
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FILE UPLOADS - Backgrounds, Audio, Custom Assets
+# ══════════════════════════════════════════════════════════════════════════════
+
+UPLOAD_DIR = _os.path.join(_STATIC_DIR, "uploads")
+_os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/jpg", "image/webp", "image/gif"}
+ALLOWED_AUDIO_TYPES = {"audio/mpeg", "audio/mp3", "audio/wav", "audio/ogg", "audio/webm"}
+
+
+@app.post("/api/upload/background")
+async def upload_background(request: Request, _=Depends(require_auth)):
+    """Upload a custom background image for login, dashboard, or sub page."""
+    form = await request.form()
+    file = form.get("file")
+    bg_type = str(form.get("type") or "login").lower()  # login, dashboard, sub
+    
+    if not file:
+        raise HTTPException(status_code=400, detail="No file uploaded")
+    
+    content_type = file.content_type or ""
+    if content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(status_code=400, detail=f"Invalid file type: {content_type}. Allowed: jpg, png, webp, gif")
+    
+    # Save file
+    ext = file.filename.split(".")[-1] if "." in (file.filename or "") else "jpg"
+    safe_name = f"bg_{bg_type}.{ext}"
+    file_path = _os.path.join(UPLOAD_DIR, safe_name)
+    
+    content = await file.read()
+    if len(content) > 10 * 1024 * 1024:  # 10MB max
+        raise HTTPException(status_code=400, detail="File too large (max 10MB)")
+    
+    _os.makedirs(_os.path.dirname(file_path), exist_ok=True)
+    with open(file_path, "wb") as f:
+        f.write(content)
+    
+    # Update settings
+    bg_key = f"bg_{bg_type}"
+    async with SETTINGS_LOCK:
+        SETTINGS[bg_key] = f"/static/uploads/{safe_name}?t={int(time.time())}"
+    
+    await save_state()
+    log_activity("settings", f"Background {bg_type} uploaded", "ok")
+    return {"ok": True, "url": SETTINGS[bg_key], "type": bg_type}
+
+
+@app.post("/api/upload/audio")
+async def upload_audio(request: Request, _=Depends(require_auth)):
+    """Upload a custom audio/music file for the panel."""
+    form = await request.form()
+    file = form.get("file")
+    
+    if not file:
+        raise HTTPException(status_code=400, detail="No file uploaded")
+    
+    content_type = file.content_type or ""
+    if content_type not in ALLOWED_AUDIO_TYPES:
+        raise HTTPException(status_code=400, detail=f"Invalid file type: {content_type}. Allowed: mp3, wav, ogg")
+    
+    ext = file.filename.split(".")[-1] if "." in (file.filename or "") else "mp3"
+    safe_name = f"panel_audio.{ext}"
+    file_path = _os.path.join(UPLOAD_DIR, safe_name)
+    
+    content = await file.read()
+    if len(content) > 50 * 1024 * 1024:  # 50MB max
+        raise HTTPException(status_code=400, detail="File too large (max 50MB)")
+    
+    _os.makedirs(_os.path.dirname(file_path), exist_ok=True)
+    with open(file_path, "wb") as f:
+        f.write(content)
+    
+    # Update settings
+    async with SETTINGS_LOCK:
+        SETTINGS["panel_audio"] = f"/static/uploads/{safe_name}?t={int(time.time())}"
+        SETTINGS["panel_audio_enabled"] = True
+    
+    await save_state()
+    log_activity("settings", "Panel audio uploaded", "ok")
+    return {"ok": True, "url": SETTINGS["panel_audio"]}
+
+
+@app.post("/api/settings/background/remove")
+async def remove_background(request: Request, _=Depends(require_auth)):
+    """Remove a custom background."""
+    body = await request.json()
+    bg_type = str(body.get("type") or "login").lower()
+    bg_key = f"bg_{bg_type}"
+    async with SETTINGS_LOCK:
+        SETTINGS.pop(bg_key, None)
+    await save_state()
+    return {"ok": True, "removed": bg_type}
+
+
+@app.post("/api/settings/audio/remove")
+async def remove_audio(_=Depends(require_auth)):
+    """Remove panel audio."""
+    async with SETTINGS_LOCK:
+        SETTINGS["panel_audio"] = ""
+        SETTINGS["panel_audio_enabled"] = False
+    await save_state()
+    return {"ok": True}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# IP SCANNER - Railway IPs, Ping Tests, Current IP
+# ══════════════════════════════════════════════════════════════════════════════
+
+RAILWAY_REGIONS = [
+    {"name": "us-west1 (Oregon)", "host": "us-west1.railway.app"},
+    {"name": "us-east4 (Virginia)", "host": "us-east4.railway.app"},
+    {"name": "us-central1 (Iowa)", "host": "us-central1.railway.app"},
+    {"name": "europe-west4 (Netherlands)", "host": "europe-west4.railway.app"},
+    {"name": "europe-west1 (Belgium)", "host": "europe-west1.railway.app"},
+    {"name": "asia-southeast1 (Singapore)", "host": "asia-southeast1.railway.app"},
+    {"name": "asia-east1 (Taiwan)", "host": "asia-east1.railway.app"},
+    {"name": "asia-northeast1 (Tokyo)", "host": "asia-northeast1.railway.app"},
+    {"name": "australia-southeast1 (Sydney)", "host": "australia-southeast1.railway.app"},
+    {"name": "southamerica-east1 (Sao Paulo)", "host": "southamerica-east1.railway.app"},
+]
+
+FAMOUS_SITES = [
+    {"name": "Google", "host": "google.com"},
+    {"name": "Cloudflare", "host": "cloudflare.com"},
+    {"name": "GitHub", "host": "github.com"},
+    {"name": "YouTube", "host": "youtube.com"},
+    {"name": "Amazon", "host": "amazon.com"},
+    {"name": "Wikipedia", "host": "wikipedia.org"},
+    {"name": "Microsoft", "host": "microsoft.com"},
+    {"name": "Twitter/X", "host": "twitter.com"},
+    {"name": "Instagram", "host": "instagram.com"},
+    {"name": "Telegram", "host": "telegram.org"},
+]
+
+
+import subprocess
+import platform
+
+
+@app.get("/api/tools/my-ip")
+async def get_my_ip(_=Depends(require_auth)):
+    """Get the server's current public IP."""
+    ips = {}
+    # Try multiple services
+    for service, url in [
+        ("ipify", "https://api.ipify.org?format=json"),
+        ("icanhazip", "https://icanhazip.com"),
+        ("ipinfo", "https://ipinfo.io/json"),
+    ]:
+        try:
+            async with http_client as client:
+                resp = await client.get(url, timeout=5)
+                if resp.status_code == 200:
+                    body = resp.text.strip()
+                    ips[service] = body
+        except Exception:
+            ips[service] = None
+    
+    # Try Railway metadata
+    railway_ip = None
+    try:
+        if os.environ.get("RAILWAY_STATIC_URL"):
+            railway_ip = os.environ.get("RAILWAY_STATIC_URL")
+    except Exception:
+        pass
+    
+    return {
+        "ips": ips,
+        "railway_url": railway_ip,
+        "local_hostname": platform.node(),
+    }
+
+
+@app.get("/api/tools/ping-sites")
+async def ping_famous_sites(_=Depends(require_auth)):
+    """Ping famous websites and return latency results."""
+    results = []
+    for site in FAMOUS_SITES:
+        latency = None
+        status = "error"
+        try:
+            system = platform.system().lower()
+            if system == "windows":
+                cmd = ["ping", "-n", "1", "-w", "3000", site["host"]]
+            else:
+                cmd = ["ping", "-c", "1", "-W", "3", site["host"]]
+            
+            proc = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=5)
+            
+            if proc.returncode == 0:
+                output = stdout.decode(errors="ignore")
+                # Extract time from ping output
+                import re as _re
+                if system == "windows":
+                    match = _re.search(r"time[=<](\d+)ms", output)
+                else:
+                    match = _re.search(r"time=(\d+\.?\d*)\s*ms", output)
+                if match:
+                    latency = float(match.group(1))
+                    status = "ok" if latency < 200 else ("slow" if latency < 500 else "very-slow")
+                else:
+                    status = "no-response"
+            else:
+                status = "unreachable"
+        except asyncio.TimeoutError:
+            status = "timeout"
+        except Exception:
+            status = "error"
+        
+        results.append({
+            "name": site["name"],
+            "host": site["host"],
+            "latency_ms": latency,
+            "status": status,
+        })
+    return {"sites": results}
+
+
+@app.get("/api/tools/scan-railway-ips")
+async def scan_railway_ips(_=Depends(require_auth)):
+    """Ping Railway region endpoints (NOT Cloudflare) to test connectivity."""
+    results = []
+    for region in RAILWAY_REGIONS:
+        latency = None
+        status = "error"
+        try:
+            system = platform.system().lower()
+            if system == "windows":
+                cmd = ["ping", "-n", "1", "-w", "3000", region["host"]]
+            else:
+                cmd = ["ping", "-c", "1", "-W", "3", region["host"]]
+            
+            proc = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=5)
+            
+            if proc.returncode == 0:
+                output = stdout.decode(errors="ignore")
+                import re as _re
+                if system == "windows":
+                    match = _re.search(r"time[=<](\d+)ms", output)
+                else:
+                    match = _re.search(r"time=(\d+\.?\d*)\s*ms", output)
+                if match:
+                    latency = float(match.group(1))
+                    status = "ok" if latency < 200 else ("slow" if latency < 500 else "very-slow")
+                else:
+                    status = "no-response"
+            else:
+                status = "unreachable"
+        except asyncio.TimeoutError:
+            status = "timeout"
+        except Exception:
+            status = "error"
+        
+        results.append({
+            "region": region["name"],
+            "host": region["host"],
+            "latency_ms": latency,
+            "status": status,
+        })
+    return {"regions": results}
+
+
 app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 
 # Lazy XHTTP import (after all symbols defined)
